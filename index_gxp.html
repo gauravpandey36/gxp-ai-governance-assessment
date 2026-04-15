@@ -1,0 +1,2652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GxP AI Adoption &amp; Governance Assessment Tool</title>
+  <!-- Tailwind CSS from CDN for styling -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React and ReactDOM from CDN (version 18 for createRoot support) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel standalone to transpile JSX in the browser -->
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <!-- Root element where the React application will be mounted -->
+  <div id="root"></div>
+  <!-- Inline script containing the React application code -->
+  <script type="text/babel" data-presets="react">
+    // Destructure React hooks from the global React variable
+    const { useState, useReducer, useEffect, useMemo, useCallback } = React;
+
+/* ============================================================================
+ * GxP AI Adoption & Governance Assessment Tool — Build Brief v1.0
+ * Single-file React artifact. Tailwind CSS only. Claude API via fetch().
+ * ========================================================================== */
+
+/* ---------- STORAGE ABSTRACTION (window.storage -> localStorage fallback) ---------- */
+const storage = {
+  _mem: {},
+  get(key) {
+    try {
+      if (typeof window !== "undefined" && window.storage && window.storage.getItem) {
+        return window.storage.getItem(key);
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        return window.localStorage.getItem(key);
+      }
+    } catch (e) {}
+    return this._mem[key] || null;
+  },
+  set(key, val) {
+    try {
+      if (typeof window !== "undefined" && window.storage && window.storage.setItem) {
+        window.storage.setItem(key, val);
+        return;
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(key, val);
+        return;
+      }
+    } catch (e) {}
+    this._mem[key] = val;
+  },
+  remove(key) {
+    try {
+      if (typeof window !== "undefined" && window.storage && window.storage.removeItem) {
+        window.storage.removeItem(key);
+        return;
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem(key);
+        return;
+      }
+    } catch (e) {}
+    delete this._mem[key];
+  },
+};
+
+/* ---------- UUID ---------- */
+const genId = () =>
+  "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+
+/* ==================== INTAKE QUESTIONS (I-1 to I-10) ==================== */
+const INTAKE_QUESTIONS = [
+  {
+    id: "I1",
+    label: "Which GxP function(s) does this AI application serve? (Select all that apply)",
+    type: "multi",
+    options: ["GCP", "GMP", "GVP", "GDP", "Pre-clinical R&D", "Regulatory Affairs", "Quality Systems"],
+    basis: "Determines which regulatory frameworks are activated across all 6 modules",
+  },
+  {
+    id: "I2",
+    label: "What phase of the product lifecycle does this AI application operate in?",
+    type: "single",
+    options: [
+      "Pre-clinical",
+      "Phase I-II Clinical",
+      "Phase III Clinical",
+      "Regulatory Submission",
+      "Commercial Manufacturing",
+      "Post-Marketing",
+      "Multi-phase",
+    ],
+    basis: "FDA CSA; ICH Q9(R1) risk formality; EU Annex 22",
+  },
+  {
+    id: "I3",
+    label: "What type of AI system are you building or adopting?",
+    type: "multi",
+    options: [
+      "Large Language Model (LLM)",
+      "Generative AI",
+      "Traditional ML Model (classifier, regression)",
+      "Computer Vision",
+      "Multi-Agent System",
+      "RAG Pipeline",
+      "Predictive/Forecasting Model",
+      "AI Embedded in COTS Platform",
+      "Other",
+    ],
+    basis: "GAMP 5 Appendix D11; EU GMP Annex 22; NIST AI RMF MAP 2.1",
+  },
+  {
+    id: "I4",
+    label: "Where will the AI system be deployed?",
+    type: "single",
+    options: [
+      "Cloud API (vendor-hosted, e.g., Azure OpenAI, AWS Bedrock)",
+      "On-Premise (company-controlled infrastructure)",
+      "Hybrid (on-prem inference, cloud orchestration)",
+      "SaaS (vendor-managed platform)",
+    ],
+    basis: "GDPR data residency; 21 CFR Part 11; GAMP 5 supplier qualification",
+  },
+  {
+    id: "I5",
+    label: "What is the most sensitive category of data the AI system will process or train on?",
+    type: "single",
+    options: [
+      "Fully de-identified",
+      "Pseudonymized",
+      "Identified patient/subject data (PHI/PII)",
+      "GMP batch records and manufacturing data",
+      "Clinical trial source data",
+      "Pharmacovigilance adverse event data",
+      "Proprietary formulation/process data",
+      "No regulated data",
+    ],
+    basis: "GDPR Art. 9; HIPAA; ALCOA++; EU AI Act Art. 12; 21 CFR Part 11",
+  },
+  {
+    id: "I6",
+    label: "What is the primary output use of this AI system?",
+    type: "single",
+    options: [
+      "Decision support — human reviews and approves all outputs before any GxP record action",
+      "Advisory — human may act without reviewing every output",
+      "Automated action — AI takes direct action on GxP records without mandatory human review",
+    ],
+    basis: "EU GMP Annex 22 HITL; EU AI Act Art. 14; FDA CSA; EFPIA Sept 2024",
+  },
+  {
+    id: "I7",
+    label:
+      "Will the AI system's outputs directly enter, modify, or trigger changes to any GxP-controlled record, system, or process?",
+    type: "single",
+    options: [
+      "Yes — outputs flow directly into GxP records",
+      "Yes — outputs trigger automated workflow steps",
+      "No — outputs are used informally without entering GxP records",
+      "Unsure",
+    ],
+    basis: "21 CFR Part 11; EU GMP Annex 11; ALCOA++; EU GMP Annex 22",
+  },
+  {
+    id: "I8",
+    label: "Is this AI system being built in-house / customised, or is it a commercial off-the-shelf (COTS) product?",
+    type: "single",
+    options: [
+      "Fully custom-built (in-house or contracted)",
+      "COTS platform configured without code modification",
+      "Fine-tuned foundation model (commercial base + custom training)",
+      "COTS platform with significant custom extensions",
+    ],
+    basis: "GAMP 5 Category 4 vs. 5; Supplier qualification; ISPE GAMP AI Guide 2025",
+  },
+  {
+    id: "I9",
+    label: "Does this AI system interact with or call any external tools, APIs, enterprise systems, or agents?",
+    type: "multi",
+    options: [
+      "Internal GxP systems (LIMS, MES, CTMS, QMS, eTMF)",
+      "External regulatory databases (FDA, EMA, PubMed)",
+      "Cloud AI APIs (OpenAI, Anthropic, Google)",
+      "Robotic process automation",
+      "No external tool calls",
+      "Multi-agent orchestration (other agents)",
+    ],
+    basis: "OWASP LLM07; NIST CSF 2.0 GV.SC; EU AI Act supply chain; AgentOps sandboxing",
+  },
+  {
+    id: "I10",
+    label: "What is your organisation's current AI governance maturity level?",
+    type: "single",
+    options: [
+      "No AI governance (no AI policy, no inventory, no validation SOP)",
+      "Initial (AI policy drafted, no formal validation yet)",
+      "Developing (one or more AI tools validated, governance SOP exists)",
+      "Established (AI governance committee, validated tools in production, periodic reviews active)",
+      "Advanced (AI RMF implemented, AI registry operational, continuous monitoring active)",
+    ],
+    basis: "NIST AI RMF GOVERN; ICH Q10 quality maturity; ISPE GAMP AI Guide 2025",
+  },
+];
+
+/* ==================== MODULE QUESTION SETS ==================== */
+const MODULES = [
+  {
+    id: 1,
+    name: "AI Risk Classification",
+    tags: ["EU AI Act", "EU GMP Annex 22", "GAMP 5", "NIST AI RMF"],
+    purpose:
+      "Classify the AI system's risk tier across four parallel frameworks. Show the current classification AND the path to reduce it.",
+    groups: [
+      {
+        name: "Criticality & Impact",
+        questions: [
+          {
+            id: "M1-1",
+            label:
+              "Does the AI system make or directly support decisions that could affect patient safety, product quality, or data integrity in a GxP context?",
+            type: "single",
+            options: [
+              "Yes — directly",
+              "Yes — indirectly through downstream process",
+              "No",
+            ],
+            basis: "EU AI Act Annex III; EU GMP Annex 22; ICH Q9(R1) severity",
+            domains: ["GMP", "GCP", "GVP", "GDP"],
+          },
+          {
+            id: "M1-2",
+            label:
+              "Does the AI system's output influence GMP batch disposition, clinical trial eligibility decisions, or pharmacovigilance safety reporting?",
+            type: "single",
+            options: [
+              "Yes — batch disposition",
+              "Yes — clinical eligibility",
+              "Yes — safety reporting",
+              "No",
+              "More than one",
+            ],
+            basis: "EU GMP Annex 22 §4.1; EU AI Act Annex III; ICH E6(R3) §5.5",
+          },
+          {
+            id: "M1-3",
+            label: "Is the AI system a generative AI or Large Language Model (LLM)?",
+            type: "single",
+            options: ["Yes, LLM/GenAI", "Yes, fine-tuned LLM", "No, traditional ML", "No, deterministic/rule-based", "Hybrid"],
+            basis: "EU GMP Annex 22; FDA-EMA Joint Principles Jan 2026",
+          },
+          {
+            id: "M1-4",
+            label: "Is the AI system dynamic (continuously learning or retrained in production) or static?",
+            type: "single",
+            options: [
+              "Dynamic — continuously learning",
+              "Dynamic — periodic retraining",
+              "Static — fixed at deployment",
+              "Static — rule-based/deterministic",
+            ],
+            basis: "EU GMP Annex 22; FDA drugs AI guidance",
+          },
+        ],
+      },
+      {
+        name: "Human Oversight",
+        questions: [
+          {
+            id: "M1-5",
+            label: "What human oversight model is designed for this system?",
+            type: "single",
+            options: [
+              "HITL — human reviews and approves EVERY output before GxP action",
+              "HOTL — human monitors system and can intervene",
+              "Fully automated — no mandatory human review",
+              "Not yet defined",
+            ],
+            basis: "EU GMP Annex 22 HITL; EFPIA Sept 2024; EU AI Act Art. 14",
+          },
+          {
+            id: "M1-6",
+            label: "Can a human operator meaningfully override, stop, or reverse the AI system's outputs or actions?",
+            type: "single",
+            options: [
+              "Yes — with full audit trail",
+              "Yes — technically but no formal process",
+              "No — outputs auto-execute",
+              "Not applicable",
+            ],
+            basis: "EU AI Act Art. 14(4); EU GMP Annex 22",
+          },
+          {
+            id: "M1-7",
+            label: "Does the AI system produce probabilistic outputs (confidence scores) rather than deterministic?",
+            type: "single",
+            options: [
+              "Probabilistic outputs with confidence score",
+              "Probabilistic without confidence score",
+              "Deterministic",
+              "Mixed",
+            ],
+            basis: "EU GMP Annex 22 §6.3",
+          },
+        ],
+      },
+      {
+        name: "Risk Scoring",
+        questions: [
+          {
+            id: "M1-8",
+            label: "Under the EU AI Act, which category best describes the intended purpose of this AI system?",
+            type: "single",
+            options: [
+              "Safety component in medical product",
+              "Used in clinical trials for drug development",
+              "Biometric identification",
+              "None of these — internal quality/operations use only",
+              "Unsure — need guidance",
+            ],
+            basis: "EU AI Act Annex III; Art. 6; EMA reflection paper",
+          },
+          {
+            id: "M1-9",
+            label: "What is the consequence of an AI system failure on product quality or patient safety?",
+            type: "single",
+            options: [
+              "Catastrophic — immediate patient harm possible",
+              "Severe — batch rejection or recall",
+              "Moderate — investigation required but no direct patient harm",
+              "Minor — operational inefficiency only",
+              "Negligible",
+            ],
+            basis: "ICH Q9(R1) severity (S); GAMP 5; EU GMP Annex 22",
+          },
+          {
+            id: "M1-10",
+            label: "How detectable is an AI system error before it affects a GxP-controlled outcome?",
+            type: "single",
+            options: [
+              "Immediately detectable — human review step catches errors",
+              "Detectable with monitoring — periodic review catches errors",
+              "Difficult to detect — errors may propagate unnoticed",
+              "Not detectable without external audit",
+            ],
+            basis: "ICH Q9(R1) detectability (D); FMECA RPN; NIST AI RMF MEASURE 2.2",
+          },
+          {
+            id: "M1-11",
+            label: "Will this AI system be used across multiple GxP domains or sites?",
+            type: "single",
+            options: [
+              "Single domain, single site",
+              "Single domain, multiple sites",
+              "Multiple domains, single site",
+              "Multiple domains, multiple sites — enterprise-wide",
+            ],
+            basis: "NIST AI RMF GOVERN 1.6; EU AI Act Art. 49; ICH Q10",
+          },
+          {
+            id: "M1-12",
+            label: "Intended deployment timeline relative to EU AI Act high-risk enforcement (Aug 2, 2026)?",
+            type: "single",
+            options: [
+              "Already in production",
+              "Deploy before Aug 2, 2026",
+              "Deploy after Aug 2, 2026",
+              "Timeline undefined",
+            ],
+            basis: "EU AI Act Art. 113; Art. 111 transitional",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 2,
+    name: "GxP Regulatory Compliance",
+    tags: ["21 CFR Part 11", "EU Annex 11/22", "FDA CSA", "ICH Q9(R1)"],
+    purpose: "Determine which GxP regulatory requirements apply and what compliance obligations must be met.",
+    groups: [
+      {
+        name: "Electronic Records & Signatures",
+        questions: [
+          {
+            id: "M2-1",
+            label:
+              "Do the AI system's outputs constitute or directly affect GxP electronic records (21 CFR Part 11 / EU Annex 11)?",
+            type: "single",
+            options: [
+              "Yes — outputs are GxP electronic records",
+              "Yes — outputs trigger changes to existing GxP records",
+              "No — outputs are informal, non-GxP",
+              "Unsure",
+            ],
+            basis: "21 CFR Part 11 §11.1; EU GMP Annex 11 §1; FDA CSA",
+          },
+          {
+            id: "M2-2",
+            label: "(GMP) Does the AI system operate in or affect a critical GMP application (EU GMP Annex 22)?",
+            type: "single",
+            options: [
+              "Critical GMP application (direct batch disposition, process control, QC release)",
+              "Non-critical GMP application (decision support, document review, anomaly flagging)",
+              "Not GMP-applicable",
+              "Unsure",
+            ],
+            basis: "EU GMP Annex 22 §3; EU GMP Annex 11 §1",
+            showIf: (intake) => (intake.I1 || []).includes("GMP"),
+            domain: "GMP",
+          },
+          {
+            id: "M2-3",
+            label:
+              "(GCP) Does the AI system process, modify, or generate clinical trial data, informed consent records, or adverse event reports?",
+            type: "single",
+            options: [
+              "Clinical trial data",
+              "Adverse event",
+              "Informed consent",
+              "Protocol documents only",
+              "Not GCP-applicable",
+            ],
+            basis: "ICH E6(R3) §5.5; 21 CFR Part 11; FDA 21 CFR Part 312; EU CTR",
+            showIf: (intake) => (intake.I1 || []).includes("GCP"),
+            domain: "GCP",
+          },
+          {
+            id: "M2-4",
+            label:
+              "(GVP) Does the AI system support pharmacovigilance functions including signal detection, case processing, or PSUR generation?",
+            type: "single",
+            options: [
+              "Signal detection",
+              "Individual case processing",
+              "PSUR/PBRER preparation",
+              "Literature monitoring",
+              "Not GVP-applicable",
+            ],
+            basis: "EU GVP Module XV (draft); EMA reflection paper; ICH E2E",
+            showIf: (intake) => (intake.I1 || []).includes("GVP"),
+            domain: "GVP",
+          },
+          {
+            id: "M2-5",
+            label:
+              "(GDP) Does the AI system support distribution, temperature monitoring, serialisation, or supply chain traceability?",
+            type: "single",
+            options: [
+              "Cold chain monitoring",
+              "Serialisation/track and trace",
+              "Supply chain risk",
+              "Transportation routing",
+              "Not GDP-applicable",
+            ],
+            basis: "EU GDP Guidelines (2013/C 68/01); PIC/S PI 041-1; 21 CFR 211.68",
+            showIf: (intake) => (intake.I1 || []).includes("GDP"),
+            domain: "GDP",
+          },
+          {
+            id: "M2-6",
+            label:
+              "Does the AI system require electronic signatures (not just audit trails) on its outputs under GxP regulations?",
+            type: "single",
+            options: [
+              "Yes — e-signatures required (outputs have regulatory standing)",
+              "Yes — handwritten signatures equivalent required",
+              "No — audit trail sufficient",
+              "Unsure",
+            ],
+            basis: "21 CFR Part 11 §11.50; EU GMP Annex 11 §12; 21 CFR 211.68",
+          },
+        ],
+      },
+      {
+        name: "Validation & Risk Management",
+        questions: [
+          {
+            id: "M2-7",
+            label: "Has a formal Intended Use (IU) / Context of Use (CoU) document been written and approved?",
+            type: "single",
+            options: [
+              "Yes — fully documented and approved",
+              "Draft exists, not approved",
+              "Not started",
+              "Not aware of this requirement",
+            ],
+            basis: "FDA CSA Sept 2025 §V.A; FDA drugs AI guidance Jan 2025; GAMP 5 Appendix D11",
+          },
+          {
+            id: "M2-8",
+            label: "Has a formal Risk Assessment (FMEA or FMECA) been conducted under ICH Q9(R1)?",
+            type: "single",
+            options: [
+              "Yes — full FMECA completed",
+              "FMEA only (no criticality)",
+              "Risk assessment started but not complete",
+              "Not started",
+              "Not applicable",
+            ],
+            basis: "ICH Q9(R1) Annex I.3; GAMP 5; EU GMP Annex 22",
+          },
+          {
+            id: "M2-9",
+            label: "Has an AI-specific validation plan (not a generic CSV plan) been written for this system?",
+            type: "single",
+            options: [
+              "Yes — AI-specific plan referencing GAMP 5 Appendix D11 and/or ISPE GAMP AI Guide",
+              "Generic CSV plan adapted for AI",
+              "No validation plan",
+              "Validation not considered necessary",
+            ],
+            basis: "GAMP 5 2nd Ed. Appendix D11; ISPE GAMP AI Guide 2025; FDA CSA",
+          },
+          {
+            id: "M2-10",
+            label:
+              "Is a formal HITL process documented in an SOP, with defined review criteria, override procedures, and e-signature requirements?",
+            type: "single",
+            options: [
+              "Yes — full HITL SOP with e-signatures",
+              "Process defined but not in SOP",
+              "Ad hoc human review without formal process",
+              "No human review process",
+              "Not applicable — system is fully automated",
+            ],
+            basis: "EU GMP Annex 22; EFPIA Sept 2024; 21 CFR §211.192; EU AI Act Art. 14",
+          },
+          {
+            id: "M2-11",
+            label:
+              "Does the organisation have a change control SOP that explicitly covers AI model updates, prompt changes, and knowledge base updates?",
+            type: "single",
+            options: [
+              "Yes — AI-specific change control SOP",
+              "Generic change control adapted",
+              "Change control exists but does not cover AI-specific elements",
+              "No change control for AI",
+              "Not applicable",
+            ],
+            basis: "GAMP 5 §10; EU GMP Annex 22; FDA CSA; PCCP concept",
+          },
+          {
+            id: "M2-12",
+            label: "Does the organisation conduct periodic reviews of AI systems on a defined schedule?",
+            type: "single",
+            options: [
+              "Yes — periodic review SOP with defined frequency",
+              "Planned but not implemented",
+              "No formal periodic review",
+              "Not applicable",
+            ],
+            basis: "GAMP 5 §11; EU GMP Annex 11 §11; ICH Q10; ISPE GAMP AI Guide 2025",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 3,
+    name: "Data Governance & Privacy",
+    tags: ["GDPR", "HIPAA", "ALCOA++", "EU AI Act Art. 12"],
+    purpose:
+      "Assess data protection obligations across GxP data integrity (ALCOA++) and privacy frameworks (GDPR, HIPAA).",
+    groups: [
+      {
+        name: "Personal Data & Privacy",
+        questions: [
+          {
+            id: "M3-1",
+            label: "Does the AI system process, store, or train on personal data of EU/UK individuals?",
+            type: "single",
+            options: [
+              "Yes — health/genetic data (Art. 9 GDPR)",
+              "Yes — pseudonymised personal data",
+              "Yes — fully anonymised",
+              "No personal data",
+              "Unsure",
+            ],
+            basis: "GDPR Art. 9; GDPR Art. 5; UK GDPR; ICH E6(R3)",
+            showIf: (intake) => {
+              const i5 = intake.I5 || "";
+              return (
+                (intake.I1 || []).includes("GCP") ||
+                /PHI|patient|clinical|pharmacovigilance|Pseudonymized|Identified/i.test(i5)
+              );
+            },
+          },
+          {
+            id: "M3-2",
+            label: "Does the AI system process Protected Health Information (PHI) of US individuals under HIPAA?",
+            type: "single",
+            options: [
+              "Yes — identifiable PHI",
+              "Yes — de-identified (Safe Harbor method)",
+              "Yes — de-identified (Expert Determination)",
+              "No US health data",
+              "Unsure",
+            ],
+            basis: "HIPAA Privacy Rule 45 CFR §164.514; HIPAA Security Rule",
+          },
+          {
+            id: "M3-3",
+            label: "What is the legal basis for processing personal data in this AI system?",
+            type: "multi",
+            options: [
+              "Scientific research (Art. 9(2)(j))",
+              "Public task",
+              "Explicit consent",
+              "Legitimate interest",
+              "Not applicable",
+              "Not yet defined",
+            ],
+            basis: "GDPR Art. 6 and Art. 9(2); ICH E6(R3); EU CTR",
+          },
+        ],
+      },
+      {
+        name: "Data Integrity (ALCOA++)",
+        questions: [
+          {
+            id: "M3-4",
+            label:
+              "Have ALCOA++ attributes been mapped to the AI system's data inputs and outputs (all 10 attributes)?",
+            type: "single",
+            options: [
+              "Full ALCOA++ mapping completed",
+              "Partial mapping",
+              "ALCOA+ only (9 attributes)",
+              "Not started",
+              "Not applicable",
+            ],
+            basis: "PIC/S PI 041-1; FDA Data Integrity Q&A 2018; EU GMP Ch.4 Draft 2025",
+          },
+          {
+            id: "M3-5",
+            label:
+              "For AI training data: has the provenance, consent/authorisation basis, and de-identification status been documented?",
+            type: "single",
+            options: [
+              "Yes — full training data provenance document",
+              "Partial — source documented but not de-identification",
+              "Not documented",
+              "No training data used (COTS model)",
+              "Unsure",
+            ],
+            basis: "FDA-EMA Joint Principles Jan 2026; NIST AI 600-1; EU AI Act Annex IV",
+          },
+        ],
+      },
+      {
+        name: "Cross-Border & Contracts",
+        questions: [
+          {
+            id: "M3-6",
+            label:
+              "Will the AI system transfer personal or GxP data across national borders?",
+            type: "single",
+            options: [
+              "Yes — EEA to US (requires SCCs or BCRs)",
+              "Yes — EEA to other non-adequate country",
+              "Yes — within EEA only",
+              "No cross-border transfer",
+              "Unsure",
+            ],
+            basis: "GDPR Art. 44-49; EU-US Data Privacy Framework; China PIPL Jan 2026",
+          },
+          {
+            id: "M3-7",
+            label: "Has a Data Protection Impact Assessment (DPIA) been conducted for this AI system?",
+            type: "single",
+            options: [
+              "Yes — full DPIA approved",
+              "In progress",
+              "Not started",
+              "Not required (confirmed by DPO)",
+              "DPO not assigned",
+            ],
+            basis: "GDPR Art. 35; ICO AI and Data Protection Guidance; EU AI Act Art. 9",
+          },
+          {
+            id: "M3-10",
+            label:
+              "Does the organisation have a Data Processing Agreement (DPA) with every third-party vendor that processes personal data for this AI system?",
+            type: "single",
+            options: [
+              "Yes — DPAs in place for all vendors",
+              "Partial — some vendors without DPA",
+              "No DPAs",
+              "Not applicable (no personal data)",
+              "In progress",
+            ],
+            basis: "GDPR Art. 28; ICH E6(R3) CRO/CDMO oversight; Sub-processor requirements",
+          },
+        ],
+      },
+      {
+        name: "Audit Trail & Traceability",
+        questions: [
+          {
+            id: "M3-8",
+            label:
+              "Does the AI system's audit trail satisfy 21 CFR Part 11: computer-generated, date/time stamped, user-attributable, tamper-resistant, retained?",
+            type: "single",
+            options: [
+              "Yes — all five requirements met",
+              "Partial — 3-4 requirements met",
+              "Partial — 1-2 requirements met",
+              "No audit trail",
+              "Not applicable",
+            ],
+            basis: "21 CFR Part 11 §11.10(e); EU GMP Annex 11 §9; EU AI Act Art. 12",
+          },
+          {
+            id: "M3-9",
+            label:
+              "Can each output be traced to the specific model version, prompt version, input data, and timestamp that generated it?",
+            type: "single",
+            options: [
+              "Yes — full output provenance trace",
+              "Partial — model version and timestamp only",
+              "No traceability",
+              "Not applicable",
+            ],
+            basis: "21 CFR Part 11; EU GMP Annex 22; NIST AI RMF MAP 1.1; ALCOA++",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 4,
+    name: "Computer System Validation & Software Assurance",
+    tags: ["GAMP 5 2nd Ed.", "ISPE GAMP AI Guide", "FDA CSA", "IQ/OQ/PQ"],
+    purpose: "Determine GAMP 5 category, validation depth, documentation, and maintenance requirements.",
+    groups: [
+      {
+        name: "Specification & Requirements",
+        questions: [
+          {
+            id: "M4-1",
+            label:
+              "Has a User Requirements Specification (URS) been written including performance thresholds, explainability, and HITL design?",
+            type: "single",
+            options: [
+              "Yes — approved URS",
+              "Draft URS in progress",
+              "Not started",
+              "Not aware of requirement",
+            ],
+            basis: "GAMP 5 §7.3; GAMP AI Guide 2025; FDA CSA; NIST AI RMF MAP 1.6",
+          },
+          {
+            id: "M4-2",
+            label:
+              "Have quantified acceptance criteria (sensitivity, specificity, F1, hallucination rate) been defined before validation?",
+            type: "single",
+            options: [
+              "Yes — quantified acceptance criteria approved",
+              "Criteria defined but not approved",
+              "Criteria discussed informally",
+              "Not defined",
+              "Not applicable",
+            ],
+            basis: "EU GMP Annex 22 §6.2; GAMP 5 OQ; FDA CSA fitness-for-use; ICH Q9(R1)",
+          },
+          {
+            id: "M4-3",
+            label:
+              "Has a training/validation/test dataset split been established with documented independence?",
+            type: "single",
+            options: [
+              "Yes — documented split with independence verification",
+              "Split performed but not documented",
+              "No split — single dataset used",
+              "Not applicable (no model training)",
+            ],
+            basis: "GAMP 5 Appendix D11; ISPE GAMP AI Guide 2025; EU GMP Annex 22; NIST AI RMF MEASURE 2.3",
+            showIf: (intake) =>
+              /custom|Fine-tuned/i.test(intake.I8 || ""),
+          },
+        ],
+      },
+      {
+        name: "Qualification & Testing",
+        questions: [
+          {
+            id: "M4-4",
+            label:
+              "Has IQ (or CSA infrastructure qualification equivalent) been completed: version pinning, hash verification, environment?",
+            type: "single",
+            options: [
+              "Yes — IQ protocol executed and approved",
+              "In progress",
+              "Not started",
+              "Using CSA approach — IQ label not used but evidence documented",
+            ],
+            basis: "GAMP 5 §9 IQ; FDA CSA Sept 2025; ISPE GAMP AI Guide 2025",
+          },
+          {
+            id: "M4-5",
+            label: "Has OQ (or CSA functional testing equivalent) been completed?",
+            type: "single",
+            options: [
+              "Yes — OQ completed with all tests passed",
+              "In progress",
+              "Not started",
+              "CSA approach — critical thinking-based evidence documented without OQ label",
+            ],
+            basis: "GAMP 5 §9 OQ; FDA CSA; EU GMP Annex 22 §6; RAGAS",
+          },
+          {
+            id: "M4-6",
+            label: "Has PQ (Performance Qualification) or equivalent been completed?",
+            type: "single",
+            options: [
+              "Yes — PQ completed",
+              "In progress",
+              "Not started",
+              "CSA approach — performance evidence documented without PQ label",
+              "Not required (low risk)",
+            ],
+            basis: "GAMP 5 §9 PQ; EU GMP Annex 22 §6; RAGAS; FMECA",
+          },
+          {
+            id: "M4-7",
+            label: "Has bias testing been conducted to confirm the AI system does not produce systematically skewed outputs?",
+            type: "single",
+            options: [
+              "Yes — bias testing completed with documented results",
+              "Bias assessment performed informally",
+              "Not conducted",
+              "Not applicable",
+            ],
+            basis: "NIST AI RMF MEASURE 2.5; EU AI Act Art. 10; ISPE GAMP AI Guide 2025",
+          },
+          {
+            id: "M4-8",
+            label: "Has the AI model's explainability been assessed and documented?",
+            type: "single",
+            options: [
+              "Yes — explainability methods documented (SHAP, LIME, attention, etc.)",
+              "Partially explainable",
+              "Black-box — explainability not addressed",
+              "Not required per risk assessment",
+            ],
+            basis: "EU GMP Annex 22 §5.3; NIST AI RMF MAP 2.2; EU AI Act Art. 13",
+          },
+        ],
+      },
+      {
+        name: "Change Control & Summary",
+        questions: [
+          {
+            id: "M4-9",
+            label:
+              "Does change control SOP address (a) prompts, (b) model versions, (c) knowledge base, (d) training data, (e) orchestration?",
+            type: "single",
+            options: [
+              "Yes — all five covered",
+              "3-4 covered",
+              "1-2 covered",
+              "Generic change control only",
+              "No change control",
+            ],
+            basis: "GAMP 5 §10; EU GMP Annex 22; ISPE GAMP AI Guide 2025; FDA CSA",
+          },
+          {
+            id: "M4-10",
+            label: "Has a Validation Summary Report (VSR) or equivalent been written and approved?",
+            type: "single",
+            options: [
+              "Yes — VSR approved",
+              "Draft in progress",
+              "Not started",
+              "Will use CSA evidence package without VSR label",
+              "Not required",
+            ],
+            basis: "GAMP 5 §9; FDA CSA Sept 2025; EU GMP Annex 22 §6; 21 CFR Part 11",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 5,
+    name: "AI Cybersecurity Assessment",
+    tags: ["NIST CSF 2.0", "NIST SP 800-218A", "OWASP LLM Top 10", "EU AI Act Art. 15"],
+    purpose: "Assess cybersecurity controls for AI systems covering conventional IT and AI-specific attack vectors.",
+    groups: [
+      {
+        name: "Threat Modelling & Asset Protection",
+        questions: [
+          {
+            id: "M5-1",
+            label:
+              "Has an AI-specific threat model been conducted (prompt injection, poisoning, leakage, API abuse, supply chain)?",
+            type: "single",
+            options: [
+              "Yes — AI-specific threat model documented",
+              "Generic IT threat model only",
+              "Not conducted",
+              "In progress",
+            ],
+            basis: "NIST CSF 2.0 ID.RA; NIST SP 800-218A; EU AI Act Art. 15; OWASP LLM Top 10",
+          },
+          {
+            id: "M5-2",
+            label:
+              "Are model weights, fine-tuned adapters, and system prompts treated as high-value assets (access controls, hash, encryption)?",
+            type: "single",
+            options: [
+              "Yes — all three controls in place",
+              "Partial",
+              "No",
+              "Not applicable (COTS model)",
+            ],
+            basis: "NIST SP 800-218A; NIST CSF PR.DS-01; OWASP LLM05/10",
+          },
+        ],
+      },
+      {
+        name: "Model Security",
+        questions: [
+          {
+            id: "M5-3",
+            label: "Are prompt injection defences implemented (input sanitisation, instruction hierarchy, output filtering)?",
+            type: "single",
+            options: [
+              "Yes — multiple defences implemented",
+              "Single defence only",
+              "Not implemented",
+              "Not applicable",
+            ],
+            basis: "OWASP LLM01; NIST AI 600-1; EU AI Act Art. 15; NIST CSF PR.PS-01",
+            showIf: (intake) =>
+              (intake.I3 || []).some((v) => /LLM|Generative|RAG|Multi-Agent/i.test(v)),
+          },
+        ],
+      },
+      {
+        name: "Access Controls",
+        questions: [
+          {
+            id: "M5-4",
+            label:
+              "Is RBAC implemented for: admin console, prompt logs, training data, model weights, outputs?",
+            type: "single",
+            options: [
+              "Yes — RBAC for all five",
+              "Yes — 3-4 of five",
+              "Partial — 1-2 of five",
+              "No access control",
+              "Not applicable",
+            ],
+            basis: "NIST CSF PR.AA-01; 21 CFR Part 11 §11.10(d); EU GMP Annex 11 §12",
+          },
+          {
+            id: "M5-5",
+            label:
+              "Are AI system interactions (prompts, tool calls, outputs, user actions) logged in an immutable, tamper-resistant audit trail?",
+            type: "single",
+            options: [
+              "Yes — immutable logs with defined retention",
+              "Logs exist but not immutable",
+              "Partial logging",
+              "No logging",
+            ],
+            basis: "21 CFR Part 11 §11.10(e); NIST CSF PR.DS-01; EU AI Act Art. 12",
+          },
+          {
+            id: "M5-9",
+            label:
+              "For AI systems connected to GxP systems (LIMS, MES, QMS): tool permissions scoped to minimum necessary and validated?",
+            type: "single",
+            options: [
+              "Yes — minimum necessary permissions, validated",
+              "Minimum permissions but not formally validated",
+              "Broad permissions",
+              "Not connected to GxP systems",
+            ],
+            basis: "OWASP LLM07/08; NIST CSF PR.AA-01; EU GMP Annex 22",
+          },
+        ],
+      },
+      {
+        name: "Incident Response & Supply Chain",
+        questions: [
+          {
+            id: "M5-6",
+            label: "Has an AI-specific incident response plan been documented (hallucination, prompt injection, drift, breach)?",
+            type: "single",
+            options: [
+              "Yes — AI-specific IRP",
+              "Generic IT IRP adapted for AI",
+              "Generic IRP only",
+              "No IRP",
+            ],
+            basis: "NIST CSF RS.MA-01; NIST SP 800-53 IR; ICH Q10 CAPA; EU AI Act Art. 73",
+          },
+          {
+            id: "M5-7",
+            label:
+              "For AI systems using third-party APIs: has a vendor security assessment been conducted (data residency, encryption, SOC 2, DPA)?",
+            type: "single",
+            options: [
+              "Yes — full vendor assessment completed",
+              "Partial assessment",
+              "No assessment",
+              "Not applicable (on-premise only)",
+            ],
+            basis: "NIST CSF GV.SC; GDPR Art. 28; EU AI Act supply chain",
+          },
+          {
+            id: "M5-8",
+            label: "Is an AI-BOM maintained listing all models, libraries, datasets, tools with versions and hashes?",
+            type: "single",
+            options: [
+              "Yes — AI-BOM maintained and reviewed",
+              "Standard software SBOM only",
+              "Not maintained",
+              "Not aware of requirement",
+            ],
+            basis: "NIST CSF GV.SC-01; NIST SP 800-218A; OWASP LLM05",
+          },
+          {
+            id: "M5-10",
+            label: "Has EU AI Act Article 15 (accuracy, robustness, cybersecurity for high-risk AI) been assessed?",
+            type: "single",
+            options: [
+              "Yes — Art. 15 assessment completed",
+              "In progress",
+              "Not yet assessed",
+              "Not applicable (not high-risk under EU AI Act)",
+            ],
+            basis: "EU AI Act Art. 15; Art. 9; Annex IV; ENISA AI security guidance",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 6,
+    name: "Continuous Monitoring, AgentOps & LLMOps",
+    tags: ["MLOps", "LLMOps", "AgentOps", "RAGAS", "Drift Detection"],
+    purpose: "Assess operational governance post-deployment: monitoring, drift, retraining, agent controls.",
+    groups: [
+      {
+        name: "Monitoring Infrastructure",
+        questions: [
+          {
+            id: "M6-1",
+            label:
+              "Is a production monitoring dashboard active tracking: request volume, latency, error rate, AI output quality continuously?",
+            type: "single",
+            options: [
+              "Yes — real-time dashboard active",
+              "Periodic sampling only",
+              "No monitoring",
+              "Monitoring planned but not implemented",
+            ],
+            basis: "FDA drugs AI guidance Jan 2025; EU GMP Annex 22; NIST AI RMF MANAGE 2.2",
+          },
+          {
+            id: "M6-2",
+            label: "For LLM/GenAI systems: RAGAS evaluation metrics baselined at validation and monitored continuously?",
+            type: "single",
+            options: [
+              "Yes — RAGAS or equivalent baselined and monitored",
+              "Metrics defined but not baselined",
+              "No LLM quality monitoring",
+              "Not applicable",
+            ],
+            basis: "ISPE GAMP AI Guide 2025; GAMP 5 D11; FDA CSA; EU GMP Annex 22",
+            showIf: (intake) =>
+              (intake.I3 || []).some((v) => /LLM|Generative|RAG/i.test(v)),
+          },
+          {
+            id: "M6-7",
+            label:
+              "Is an observability stack (Langfuse, LangSmith, Arize) configured with GxP-adequate retention, access, and audit?",
+            type: "single",
+            options: [
+              "Yes — observability stack with GxP-adequate configuration",
+              "Observability tool deployed but not GxP-configured",
+              "No observability tooling",
+              "Not applicable",
+            ],
+            basis: "21 CFR Part 11 §11.10(e); EU GMP Annex 11 §9; NIST CSF DE.CM-01",
+          },
+        ],
+      },
+      {
+        name: "Drift & Change Governance",
+        questions: [
+          {
+            id: "M6-3",
+            label:
+              "Are drift detection methods implemented with thresholds triggering change control (PSI >0.2; >10% decline)?",
+            type: "single",
+            options: [
+              "Yes — automated drift detection with change control trigger",
+              "Drift detection without automated trigger",
+              "Manual periodic review only",
+              "No drift detection",
+            ],
+            basis: "FDA drugs AI guidance; EU GMP Annex 22; NIST AI RMF MANAGE 2.4",
+          },
+          {
+            id: "M6-4",
+            label:
+              "Is there a documented decision tree for drift signals: acceptable → minor change → major change (CAPA + revalidation)?",
+            type: "single",
+            options: [
+              "Yes — documented decision tree",
+              "Process informally understood but not documented",
+              "No decision process",
+              "Not applicable",
+            ],
+            basis: "GAMP 5 §10; EU GMP Annex 22; FDA drugs AI guidance; ICH Q9(R1)",
+          },
+          {
+            id: "M6-5",
+            label:
+              "Is retraining governance documented (training data governance, test independence, acceptance testing, change control)?",
+            type: "single",
+            options: [
+              "Yes — full retraining governance documented",
+              "Partial process",
+              "No formal governance",
+              "Not applicable (no retraining)",
+            ],
+            basis: "GAMP 5 D11; ISPE GAMP AI Guide 2025; EU GMP Annex 22; FDA PCCP",
+          },
+          {
+            id: "M6-9",
+            label:
+              "When regulatory guidance is updated (new FDA, Annex 22 final), is there a process to assess impact and update validation docs?",
+            type: "single",
+            options: [
+              "Yes — regulatory change monitoring process with impact assessment",
+              "Informal awareness without formal process",
+              "No process",
+              "Not applicable",
+            ],
+            basis: "GAMP 5 §10; FDA CSA; EU GMP Annex 22; NIST AI RMF GOVERN 1.1",
+          },
+        ],
+      },
+      {
+        name: "Agent & HITL Monitoring",
+        questions: [
+          {
+            id: "M6-6",
+            label:
+              "For multi-agent systems: is every agent invocation traced with identity, input, tool calls, output+confidence, timestamp, HITL disposition?",
+            type: "single",
+            options: [
+              "Yes — all fields logged per invocation",
+              "Partial logging (some fields missing)",
+              "Agent-level logging only (not step-level)",
+              "No agent tracing",
+              "Not applicable",
+            ],
+            basis: "21 CFR Part 11; EU GMP Annex 22; NIST AI RMF MANAGE 2.2; AgentOps; OWASP LLM08",
+            showIf: (intake) =>
+              (intake.I3 || []).includes("Multi-Agent System") ||
+              (intake.I9 || []).includes("Multi-agent orchestration (other agents)"),
+          },
+          {
+            id: "M6-8",
+            label:
+              "Is a periodic review schedule defined that includes performance metrics, regulatory review, change log, re-risk assessment?",
+            type: "single",
+            options: [
+              "Yes — documented periodic review schedule",
+              "Scheduled but not yet completed first review",
+              "No formal schedule",
+              "Ad hoc review only",
+            ],
+            basis: "GAMP 5 §11; EU GMP Annex 11 §11; FDA CSA; ICH Q10; NIST AI RMF MANAGE 4.1",
+          },
+          {
+            id: "M6-10",
+            label:
+              "Is HITL completion rate monitored as a KPI — % of AI outputs requiring human review that are actually reviewed?",
+            type: "single",
+            options: [
+              "Yes — HITL completion rate tracked as a KPI",
+              "Monitored informally",
+              "Not monitored",
+              "Not applicable (no HITL required)",
+            ],
+            basis: "EU GMP Annex 22; EFPIA Sept 2024; NIST AI RMF MANAGE 2.2; FDA CSA",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 7,
+    name: "Enterprise AI Governance Readiness",
+    tags: ["NIST AI RMF GOVERN", "ISO/IEC 42001", "ICH Q10"],
+    purpose:
+      "Assess enterprise-level AI governance maturity — whether infrastructure exists to safely adopt AI at scale.",
+    groups: [
+      {
+        name: "Policy & Structure",
+        questions: [
+          {
+            id: "M7-1",
+            label:
+              "Does the organisation have an approved AI Governance Policy covering permitted/prohibited use, accountability, consequences?",
+            type: "single",
+            options: [
+              "Yes — approved and communicated",
+              "Draft exists",
+              "In development",
+              "No policy",
+            ],
+            basis: "NIST AI RMF GOVERN 1.2; ICH Q10; NIST CSF GV.PO-01; ISO/IEC 42001 §5.2",
+          },
+          {
+            id: "M7-2",
+            label:
+              "Is there a formal AI Inventory/Registry tracking all AI systems (name, use, GxP function, validation, risk, owner)?",
+            type: "single",
+            options: [
+              "Yes — live registry, regularly updated",
+              "Partial inventory",
+              "Spreadsheet only",
+              "No inventory",
+            ],
+            basis: "NIST AI RMF GOVERN 1.6; NIST CSF ID.AM; EU AI Act Art. 49; ISO/IEC 42001 §8.4",
+          },
+          {
+            id: "M7-3",
+            label:
+              "Is there an AI Governance Committee with QA, Regulatory, IT, Legal, business representation meeting at defined intervals?",
+            type: "single",
+            options: [
+              "Yes — formal committee with charter",
+              "Informal working group",
+              "No committee",
+              "AI governance embedded in existing IT governance",
+            ],
+            basis: "NIST AI RMF GOVERN 2.3; ISO/IEC 42001 §5.3; ICH Q10; ISPE GAMP AI Guide 2025",
+          },
+        ],
+      },
+      {
+        name: "Training & Vendor Management",
+        questions: [
+          {
+            id: "M7-4",
+            label:
+              "Has role-based AI training been implemented: (a) awareness, (b) validation/governance, (c) technical, (d) executive risk literacy?",
+            type: "single",
+            options: [
+              "Yes — all four levels implemented",
+              "2-3 levels",
+              "Awareness only",
+              "No AI-specific training",
+            ],
+            basis: "NIST AI RMF GOVERN 2.2; ICH Q10; EU AI Act Art. 4; GAMP 5",
+          },
+          {
+            id: "M7-5",
+            label:
+              "Is there a formal AI vendor qualification process (security, data residency, updates, compliance, DPA/QTA)?",
+            type: "single",
+            options: [
+              "Yes — formal AI vendor qualification SOP",
+              "Adapted from standard vendor qualification",
+              "No AI-specific vendor qualification",
+              "Covered under IT vendor management only",
+            ],
+            basis: "NIST AI RMF GOVERN 6.1/6.2; GDPR Art. 28; GAMP 5; NIST CSF GV.SC",
+          },
+          {
+            id: "M7-6",
+            label:
+              "Is there a process to monitor the GxP AI regulatory landscape and update governance accordingly?",
+            type: "single",
+            options: [
+              "Yes — regulatory intelligence function with AI coverage",
+              "Informal monitoring",
+              "No formal process",
+            ],
+            basis: "NIST AI RMF GOVERN 1.1; ISO/IEC 42001 §4.2; ISPE/PDA engagement; FDA guidance monitoring",
+          },
+          {
+            id: "M7-7",
+            label:
+              "Is there a documented Shadow AI policy — process for detecting and governing unsanctioned AI tool use in GxP functions?",
+            type: "single",
+            options: [
+              "Yes — shadow AI detection and policy",
+              "Policy only (no detection)",
+              "Acknowledged risk without policy",
+              "Not addressed",
+            ],
+            basis: "NIST AI RMF GOVERN 4.3; NIST CSF GV.OC; ISPE GAMP AI Guide 2025; ICH Q10",
+          },
+        ],
+      },
+    ],
+  },
+];
+
+/* ==================== OWASP LLM TOP 10 APPLICABILITY ==================== */
+const OWASP_LLM10 = [
+  { id: "LLM01", name: "Prompt Injection", applies: (i) => (i.I3 || []).some((v) => /LLM|Generative/i.test(v)) && (i.I9 || []).some((v) => /Internal GxP/i.test(v)) },
+  { id: "LLM02", name: "Insecure Output Handling", applies: (i) => /Advisory|Automated/i.test(i.I6 || "") && /Yes/i.test(i.I7 || "") },
+  { id: "LLM03", name: "Training Data Poisoning", applies: (i) => /Fine-tuned|custom/i.test(i.I8 || "") || (i.I3 || []).includes("Traditional ML Model (classifier, regression)") },
+  { id: "LLM04", name: "Model Denial of Service", applies: (i) => /Cloud/i.test(i.I4 || "") && /Advisory|Automated|Decision/i.test(i.I6 || "") },
+  { id: "LLM05", name: "Supply Chain Vulnerabilities", applies: (i) => /COTS|Fine-tuned/i.test(i.I8 || "") && /Cloud|Hybrid/i.test(i.I4 || "") },
+  { id: "LLM06", name: "Sensitive Information Disclosure", applies: (i) => /PHI|Proprietary|Clinical|Pharmacovigilance/i.test(i.I5 || "") && (i.I3 || []).some((v) => /LLM|Generative/i.test(v)) },
+  { id: "LLM07", name: "Insecure Plugin/Tool Design", applies: (i) => (i.I9 || []).some((v) => /Internal GxP|External/i.test(v)) },
+  { id: "LLM08", name: "Excessive Agency", applies: (i) => /Automated/i.test(i.I6 || "") && (i.I9 || []).includes("Multi-agent orchestration (other agents)") },
+  { id: "LLM09", name: "Overreliance", applies: (i) => /Advisory|Decision support/i.test(i.I6 || "") },
+  { id: "LLM10", name: "Model Theft", applies: (i) => /Cloud|Hybrid/i.test(i.I4 || "") && /Fine-tuned/i.test(i.I8 || "") },
+];
+
+/* ==================== GAMP 5 CATEGORY ASSIGNMENT ==================== */
+function gampCategory(intake) {
+  const i3 = intake.I3 || [];
+  const i8 = intake.I8 || "";
+  if (i3.includes("RAG Pipeline") || i3.includes("Multi-Agent System") || /Fully custom|Fine-tuned|significant custom/i.test(i8)) {
+    return { cat: "Cat. 5", depth: "Full SDLC: URS, FS, DS, code review, unit/integration test, PQ; Appendix D11 AI lifecycle; ISPE GAMP AI Guide 2025" };
+  }
+  if (/COTS platform configured/i.test(i8)) {
+    return { cat: "Cat. 4", depth: "Full IQ/OQ/PQ or CSA equivalent; configuration testing; PQ on GxP dataset" };
+  }
+  if (/COTS/i.test(i8)) {
+    return { cat: "Cat. 3", depth: "IQ + OQ; leveraged supplier testing" };
+  }
+  return { cat: "Cat. 4", depth: "Configured system validation — full IQ/OQ/PQ or CSA equivalent" };
+}
+
+/* ==================== LOCAL RISK TIER CLASSIFICATION ==================== */
+function classifyRiskTier(intake, m1) {
+  const reasons = [];
+  let tier = "LOW";
+
+  const isLLM = /Yes, LLM|Yes, fine-tuned|Generative/i.test(m1["M1-3"] || "") ||
+    (intake.I3 || []).some((v) => /LLM|Generative/i.test(v));
+  const isDynamic = /Dynamic/i.test(m1["M1-4"] || "");
+  const m1_2 = m1["M1-2"] || "";
+  const criticalGMP = /batch disposition|More than one/i.test(m1_2);
+
+  // UNRESOLVABLE HIGH
+  if (isLLM && criticalGMP) {
+    return {
+      tier: "HIGH",
+      subtier: "UNRESOLVABLE",
+      reasons: [
+        "LLM/GenAI in critical GMP (EU Annex 22 explicitly restricts this)",
+        "Cannot reduce with controls alone — must redesign",
+      ],
+    };
+  }
+  if (isDynamic && criticalGMP) {
+    return {
+      tier: "HIGH",
+      subtier: "DYNAMIC_CRITICAL",
+      reasons: [
+        "Dynamic AI in critical GMP — EU Annex 22 requires static; cannot reduce without making static",
+      ],
+    };
+  }
+
+  // HIGH triggers
+  if (/Yes — directly/i.test(m1["M1-1"] || "")) { tier = "HIGH"; reasons.push("M1-1: Direct GxP safety/quality impact"); }
+  if (m1_2 && !/No/i.test(m1_2)) { tier = "HIGH"; reasons.push("M1-2: Influences batch/clinical/PV decisions"); }
+  if (/Fully automated/i.test(m1["M1-5"] || "")) { tier = "HIGH"; reasons.push("M1-5: No mandatory human review"); }
+  if (/No — outputs auto-execute/i.test(m1["M1-6"] || "")) { tier = "HIGH"; reasons.push("M1-6: No human override capability"); }
+  if (/Catastrophic|Severe/i.test(m1["M1-9"] || "")) { tier = "HIGH"; reasons.push("M1-9: Catastrophic/severe failure consequence"); }
+
+  if (tier === "HIGH") return { tier, reasons };
+
+  // MEDIUM
+  if (
+    /indirectly/i.test(m1["M1-1"] || "") &&
+    /HITL|HOTL/i.test(m1["M1-5"] || "") &&
+    /Moderate/i.test(m1["M1-9"] || "") &&
+    /Immediately detectable/i.test(m1["M1-10"] || "")
+  ) {
+    return { tier: "MEDIUM", reasons: ["Indirect impact + HITL + moderate severity + detectable"] };
+  }
+
+  // LOW
+  if (
+    /No/i.test(m1["M1-1"] || "") &&
+    /Deterministic/i.test(m1["M1-7"] || "") &&
+    /Minor|Negligible/i.test(m1["M1-9"] || "")
+  ) {
+    return { tier: "LOW", reasons: ["No direct impact + deterministic + minor consequence"] };
+  }
+
+  return { tier: "MEDIUM", reasons: ["Default: mixed signals; treat as Medium pending full assessment"] };
+}
+
+/* ==================== SYSTEM PROMPT ==================== */
+const SYSTEM_PROMPT = `PART 1 — IDENTITY:
+You are a GxP AI Governance Expert specialising in FDA, EMA, ICH, ISPE, and NIST frameworks. You provide precise, regulation-cited guidance for AI systems in pharmaceutical GCP, GMP, GVP, and GDP functions. You do not cover medical devices (SaMD).
+
+PART 2 — REGULATORY KNOWLEDGE BASE:
+FDA: 21 CFR Part 11 (electronic records, audit trails, e-signatures); FDA CSA Final Guidance Sept 2025 (risk-based validation); FDA-EMA Joint AI Principles Jan 2026.
+EU/EMA: EU GMP Annex 22 Draft Jul 2025 (static AI preferred; GenAI restricted in critical GMP; HITL mandatory); EU GMP Annex 11 (2011); EU AI Act Reg 2024/1689 (risk tiers, Art. 14 HITL, Art. 15 cybersecurity, Art. 12 logging); EU GVP Module XV (draft).
+ICH: ICH Q9(R1) 2023 (FMEA/FMECA); ICH E6(R3) Jan 2025 (GCP sponsor oversight); ICH Q10 (PQS).
+ISPE: GAMP 5 2nd Ed. 2022 (Category 4/5; Appendix D11 AI/ML); ISPE GAMP AI Guide 2025.
+NIST: AI RMF 1.0 (GOVERN/MAP/MEASURE/MANAGE); AI 600-1 GenAI Profile; CSF 2.0; SP 800-218A.
+OWASP LLM Top 10 (2025). PIC/S PI 041-1 (2021). GDPR/HIPAA/ALCOA++.
+
+PART 3 — CLASSIFICATION RULES:
+HIGH TIER triggers if ANY of: M1-1=Yes(directly), M1-2=Yes(any), M1-5=Fully automated, M1-6=No, M1-9=Catastrophic/Severe. MEDIUM TIER if: M1-1=Yes(indirectly) AND M1-5=HITL/HOTL AND M1-9=Moderate AND M1-10=Immediately detectable. LOW TIER if: M1-1=No AND M1-7=Deterministic AND M1-9=Minor/Negligible. LLM/GenAI in critical GMP = UNRESOLVABLE HIGH. Dynamic AI in critical GMP = HIGH cannot reduce without making static.
+
+PART 4 — OUTPUT FORMAT:
+Always respond in valid JSON only (no markdown, no prose outside JSON). For per-module calls: {"status":"GREEN|AMBER|RED","finding":"2 sentences plain English","gaps":[{"description":"...","regulation":"...","section":"...","priority":"P1|P2|P3"}],"actions":[{"action":"...","basis":"...","priority":"P1|P2|P3"}]}. For final report: {"go_determination":"GO|CONDITIONAL_GO|NO_GO","rationale":"...","risk_tier":{"current":"HIGH|MEDIUM|LOW","achievable":"...","eu_ai_act":"...","eu_annex_22":"...","gamp5":"...","nist_rmf":"..."},"system_profile":"...","module_findings":[{"module":n,"status":"...","finding":"...","gaps":[...],"citations":[...]}],"risk_reduction_pathway":[{"step":n,"action":"...","regulation":"...","effort":"High|Medium|Low","type":"prerequisite|mitigator"}],"action_checklist":[{"priority":"P1|P2|P3","action":"...","role":"...","basis":"...","criteria":"..."}],"validation_roadmap":{"gamp_category":"...","lifecycle":"...","documentation":"...","testing_approach":"..."},"regulatory_citations":[{"instrument":"...","citation":"...","type":"binding|non-binding","url":"..."}]}
+
+PART 5 — CONSTRAINTS:
+Temperature=0. Never fabricate regulatory citations. If a requirement is uncertain, state the uncertainty and provide the most conservative compliant interpretation. Do not recommend non-compliant approaches. Output MUST be valid JSON parseable by JSON.parse().`;
+
+/* ==================== CLAUDE API CALL ====================
+ * Tries Claude-in-Claude artifact helper first (window.claude.complete),
+ * then falls back to direct fetch to the Anthropic API.
+ * Always returns { ok, data, raw, error } and never throws.
+ * ====================================================================== */
+function tryParseJSON(text) {
+  if (!text || typeof text !== "string") return null;
+  let cleaned = text.trim();
+  // Strip leading/trailing markdown code fences
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {}
+  // Try extracting first {...} or [...] block
+  const m = cleaned.match(/[\{\[][\s\S]*[\}\]]/);
+  if (m) {
+    try {
+      return JSON.parse(m[0]);
+    } catch (e2) {}
+  }
+  return null;
+}
+
+async function callClaude(userPrompt, maxTokens = 2000) {
+  const fullPrompt = SYSTEM_PROMPT + "\n\n=== USER REQUEST ===\n" + userPrompt;
+
+  // PATH 1: Claude-in-Claude artifact helper (preferred in Claude artifact runtime)
+  try {
+    if (
+      typeof window !== "undefined" &&
+      window.claude &&
+      typeof window.claude.complete === "function"
+    ) {
+      const text = await window.claude.complete(fullPrompt);
+      const parsed = tryParseJSON(text);
+      if (parsed) return { ok: true, data: parsed, raw: text };
+      return { ok: false, error: "window.claude returned non-JSON output", raw: text };
+    }
+  } catch (err) {
+    // fall through to fetch
+  }
+
+  // PATH 2: Direct fetch to Anthropic API
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: maxTokens,
+        temperature: 0,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+    if (!resp.ok) {
+      let bodyText = "";
+      try { bodyText = await resp.text(); } catch (e) {}
+      return { ok: false, error: `API ${resp.status}: ${(bodyText || "").slice(0, 200)}` };
+    }
+    const data = await resp.json();
+    const text = (data && data.content && data.content[0] && data.content[0].text) || "";
+    const parsed = tryParseJSON(text);
+    if (parsed) return { ok: true, data: parsed, raw: text };
+    return { ok: false, error: "Could not parse JSON response", raw: text };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || String(err) };
+  }
+}
+
+/* ==================== STATE REDUCER ==================== */
+const initialState = {
+  sessionId: null,
+  phase: "welcome", // welcome | intake | module | report
+  activeModule: 1,
+  org: "",
+  intake: {},
+  modules: {}, // { 1: {answers: {M1-1:...}, result: {...}, status:'idle|loading|done'} }
+  report: null,
+  reportStatus: "idle",
+};
+
+function reducer(state, action) {
+  switch (action.type) {
+    case "LOAD":
+      return { ...state, ...action.payload };
+    case "SET_PHASE":
+      return { ...state, phase: action.phase };
+    case "SET_ORG":
+      return { ...state, org: action.org };
+    case "SET_INTAKE":
+      return { ...state, intake: { ...state.intake, [action.id]: action.value } };
+    case "SET_MODULE_ANSWER": {
+      const mod = state.modules[action.moduleId] || { answers: {}, result: null, status: "idle" };
+      return {
+        ...state,
+        modules: {
+          ...state.modules,
+          [action.moduleId]: { ...mod, answers: { ...mod.answers, [action.qid]: action.value } },
+        },
+      };
+    }
+    case "SET_MODULE_RESULT": {
+      const mod = state.modules[action.moduleId] || { answers: {}, result: null, status: "idle" };
+      return {
+        ...state,
+        modules: {
+          ...state.modules,
+          [action.moduleId]: { ...mod, result: action.result, status: action.status || "done" },
+        },
+      };
+    }
+    case "SET_ACTIVE_MODULE":
+      return { ...state, activeModule: action.moduleId };
+    case "SET_REPORT":
+      return { ...state, report: action.report, reportStatus: action.status || "done" };
+    case "SET_REPORT_STATUS":
+      return { ...state, reportStatus: action.status };
+    case "RESET":
+      return { ...initialState, sessionId: genId() };
+    default:
+      return state;
+  }
+}
+
+/* ==================== SHOW IF HELPER ==================== */
+function visibleQuestions(group, intake) {
+  return group.questions.filter((q) => !q.showIf || q.showIf(intake));
+}
+
+/* ==================== PROGRESS CALC ==================== */
+function countTotalQuestions(state) {
+  let total = INTAKE_QUESTIONS.length;
+  let answered = Object.keys(state.intake).filter((k) => {
+    const v = state.intake[k];
+    return Array.isArray(v) ? v.length > 0 : v != null && v !== "";
+  }).length;
+  for (const m of MODULES) {
+    for (const g of m.groups) {
+      for (const q of g.questions) {
+        if (q.showIf && !q.showIf(state.intake)) continue;
+        total += 1;
+        const modAns = (state.modules[m.id] && state.modules[m.id].answers) || {};
+        const v = modAns[q.id];
+        if (Array.isArray(v) ? v.length > 0 : v != null && v !== "") answered += 1;
+      }
+    }
+  }
+  return { answered, total };
+}
+
+/* ==================== UI COMPONENTS ==================== */
+function Badge({ color = "slate", children }) {
+  const map = {
+    slate: "bg-slate-100 text-slate-700 border-slate-200",
+    green: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    amber: "bg-amber-100 text-amber-800 border-amber-200",
+    red: "bg-red-100 text-red-800 border-red-200",
+    blue: "bg-blue-100 text-blue-800 border-blue-200",
+    violet: "bg-violet-100 text-violet-800 border-violet-200",
+  };
+  return (
+    <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded border ${map[color] || map.slate}`}>
+      {children}
+    </span>
+  );
+}
+
+function RiskTierBadge({ tier, subtier }) {
+  if (!tier) return null;
+  const color = tier === "HIGH" ? "red" : tier === "MEDIUM" ? "amber" : "green";
+  return (
+    <Badge color={color}>
+      Risk Tier: {tier}
+      {subtier ? ` (${subtier})` : ""}
+    </Badge>
+  );
+}
+
+function ProgressBar({ answered, total }) {
+  const pct = total === 0 ? 0 : Math.round((answered / total) * 100);
+  return (
+    <div className="w-full">
+      <div className="flex justify-between text-xs text-slate-600 mb-1">
+        <span>Progress</span>
+        <span>
+          {answered} / {total} answered ({pct}%)
+        </span>
+      </div>
+      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+        <div className="bg-blue-600 h-2 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function HintButton({ basis }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="text-xs text-blue-600 hover:underline print:hidden"
+      >
+        {open ? "Hide" : "Why this question?"}
+      </button>
+      {open && (
+        <div className="mt-1 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-2">
+          Regulatory basis: {basis}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Question({ q, value, onChange, domain }) {
+  const multi = q.type === "multi";
+  return (
+    <div className="p-4 border border-slate-200 rounded-lg bg-white">
+      <div className="flex flex-wrap gap-2 items-start mb-2">
+        <Badge color="slate">{q.id}</Badge>
+        {domain && <Badge color="violet">{domain}</Badge>}
+        {q.domain && !domain && <Badge color="violet">{q.domain}</Badge>}
+      </div>
+      <label className="block font-medium text-slate-900 text-sm mb-2">{q.label}</label>
+      <div className="space-y-1">
+        {q.options.map((opt) => {
+          const checked = multi ? (value || []).includes(opt) : value === opt;
+          return (
+            <label
+              key={opt}
+              className={`flex items-start gap-2 text-sm cursor-pointer p-2 rounded border transition ${
+                checked ? "bg-blue-50 border-blue-300" : "border-transparent hover:bg-slate-50"
+              }`}
+            >
+              <input
+                type={multi ? "checkbox" : "radio"}
+                checked={checked}
+                onChange={() => {
+                  if (multi) {
+                    const cur = value || [];
+                    onChange(cur.includes(opt) ? cur.filter((x) => x !== opt) : [...cur, opt]);
+                  } else {
+                    onChange(opt);
+                  }
+                }}
+                className="mt-0.5"
+              />
+              <span className="text-slate-700">{opt}</span>
+            </label>
+          );
+        })}
+      </div>
+      <HintButton basis={q.basis} />
+    </div>
+  );
+}
+
+/* ---------- Welcome Screen ---------- */
+function WelcomeScreen({ state, dispatch }) {
+  return (
+    <div className="max-w-3xl mx-auto p-6 space-y-6">
+      <div className="text-center">
+        <h1 className="text-3xl font-bold text-slate-900 mb-2">
+          GxP AI Adoption & Governance Assessment Tool
+        </h1>
+        <p className="text-slate-600">
+          Build Brief v1.0 · April 2026 · A structured risk assessment for AI in pharmaceutical GCP/GMP/GVP/GDP
+        </p>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+        <h2 className="font-semibold text-slate-900">Purpose</h2>
+        <p className="text-sm text-slate-700">
+          This tool classifies your AI system across six parallel regulatory dimensions — Risk Tier, GxP Compliance,
+          Data Governance, Computer System Validation, Cybersecurity, and Continuous Monitoring — and produces a
+          Go / Conditional Go / No-Go determination with cited obligations and a risk reduction pathway.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Badge color="blue">7 Modules</Badge>
+          <Badge color="blue">120+ Questions</Badge>
+          <Badge color="blue">FDA · EMA · ICH · ISPE · NIST · OWASP</Badge>
+        </div>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-300 rounded-lg p-5">
+        <h2 className="font-semibold text-amber-900 mb-2">Scope Boundary</h2>
+        <p className="text-sm text-amber-900">
+          This tool covers AI applications in GCP (clinical trials), GMP (manufacturing/quality), GVP
+          (pharmacovigilance), and GDP (distribution). It explicitly <strong>excludes AI/ML-based Software as a Medical
+          Device (SaMD)</strong>. Medical device AI is governed by separate FDA/EMA SaMD frameworks (PCCP for devices,
+          EU MDR/IVDR).
+        </p>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-lg p-5">
+        <h2 className="font-semibold text-slate-900 mb-3">Organisation Type</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {["Big Pharma", "Biotech", "CDMO", "CRO", "Academic"].map((o) => (
+            <button
+              key={o}
+              onClick={() => dispatch({ type: "SET_ORG", org: o })}
+              className={`border rounded-lg p-3 text-sm font-medium transition ${
+                state.org === o
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : "bg-white text-slate-700 border-slate-300 hover:border-blue-400"
+              }`}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-between items-center">
+        <button
+          onClick={() => {
+            if (confirm("Clear saved assessment and restart?")) dispatch({ type: "RESET" });
+          }}
+          className="text-sm text-slate-500 hover:text-slate-700"
+        >
+          Reset
+        </button>
+        <button
+          disabled={!state.org}
+          onClick={() => dispatch({ type: "SET_PHASE", phase: "intake" })}
+          className="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium disabled:bg-slate-300 hover:bg-blue-700"
+        >
+          Begin Intake →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Intake Screen ---------- */
+function IntakeScreen({ state, dispatch }) {
+  const answeredCount = INTAKE_QUESTIONS.filter((q) => {
+    const v = state.intake[q.id];
+    return Array.isArray(v) ? v.length > 0 : v != null && v !== "";
+  }).length;
+  const complete = answeredCount === INTAKE_QUESTIONS.length;
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Intake — AI System Characterization</h2>
+          <p className="text-sm text-slate-600">
+            All 10 questions are required. Answers cascade to filter module questions.
+          </p>
+        </div>
+        <Badge color="blue">
+          {answeredCount} / {INTAKE_QUESTIONS.length}
+        </Badge>
+      </div>
+
+      <div className="space-y-3">
+        {INTAKE_QUESTIONS.map((q) => (
+          <Question
+            key={q.id}
+            q={q}
+            value={state.intake[q.id]}
+            onChange={(v) => dispatch({ type: "SET_INTAKE", id: q.id, value: v })}
+          />
+        ))}
+      </div>
+
+      <div className="flex justify-between items-center pt-4">
+        <button
+          onClick={() => dispatch({ type: "SET_PHASE", phase: "welcome" })}
+          className="text-sm text-slate-500 hover:text-slate-700"
+        >
+          ← Back
+        </button>
+        <button
+          disabled={!complete}
+          onClick={() => {
+            dispatch({ type: "SET_ACTIVE_MODULE", moduleId: 1 });
+            dispatch({ type: "SET_PHASE", phase: "module" });
+          }}
+          className="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium disabled:bg-slate-300 hover:bg-blue-700"
+        >
+          Continue to Modules →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Module Result Card ---------- */
+function ModuleResultCard({ result, status, localTier, moduleId }) {
+  if (status === "loading") {
+    return (
+      <div className="p-4 border border-blue-200 bg-blue-50 rounded-lg text-sm text-blue-800">
+        Analysing module responses with Claude API...
+      </div>
+    );
+  }
+  if (!result) return null;
+  if (result._error) {
+    return (
+      <div className="p-4 border border-red-200 bg-red-50 rounded-lg text-sm text-red-800">
+        API error: {result._error}. You can continue — a fallback local assessment has been applied.
+      </div>
+    );
+  }
+  const color = result.status === "GREEN" ? "green" : result.status === "RED" ? "red" : "amber";
+  return (
+    <div className="p-5 border border-slate-200 bg-slate-50 rounded-lg space-y-3">
+      <div className="flex flex-wrap gap-2 items-center">
+        <Badge color={color}>{result.status || "AMBER"}</Badge>
+        <span className="text-xs text-slate-500">Module {moduleId} Interim Finding</span>
+        {moduleId === 1 && localTier && <RiskTierBadge tier={localTier.tier} subtier={localTier.subtier} />}
+      </div>
+      <p className="text-sm text-slate-800">{result.finding}</p>
+      {result.gaps && result.gaps.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-slate-700 mb-1">Regulatory Gaps</div>
+          <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+            {result.gaps.map((g, i) => (
+              <li key={i}>
+                <strong>{g.description}</strong> — {g.regulation} {g.section ? `(${g.section})` : ""}{" "}
+                <Badge color={g.priority === "P1" ? "red" : g.priority === "P2" ? "amber" : "slate"}>
+                  {g.priority}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {result.actions && result.actions.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-slate-700 mb-1">Recommended Actions</div>
+          <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+            {result.actions.map((a, i) => (
+              <li key={i}>
+                {a.action} <span className="text-slate-500">— {a.basis}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Risk Dashboard ---------- */
+function RiskDashboard({ localTier, intake }) {
+  if (!localTier) return null;
+  const gamp = gampCategory(intake);
+  const mapEU = localTier.tier === "HIGH" ? "High-Risk (Annex III)" : localTier.tier === "MEDIUM" ? "Limited Risk" : "Minimal Risk";
+  const mapAnnex22 = localTier.tier === "HIGH" ? "Critical GMP Application" : localTier.tier === "MEDIUM" ? "Non-Critical GMP, HITL required" : "Non-GxP-critical support";
+  const mapNIST = localTier.tier === "HIGH" ? "High impact" : localTier.tier === "MEDIUM" ? "Moderate impact" : "Low impact";
+  return (
+    <div className="border border-slate-200 rounded-lg bg-white p-4">
+      <h3 className="font-semibold text-slate-900 text-sm mb-3">Current Risk Tier Matrix</h3>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+        <div className="p-3 bg-slate-50 rounded border border-slate-200">
+          <div className="text-slate-500 uppercase tracking-wide mb-1">EU AI Act</div>
+          <div className="font-semibold text-slate-900">{mapEU}</div>
+        </div>
+        <div className="p-3 bg-slate-50 rounded border border-slate-200">
+          <div className="text-slate-500 uppercase tracking-wide mb-1">EU Annex 22</div>
+          <div className="font-semibold text-slate-900">{mapAnnex22}</div>
+        </div>
+        <div className="p-3 bg-slate-50 rounded border border-slate-200">
+          <div className="text-slate-500 uppercase tracking-wide mb-1">GAMP 5</div>
+          <div className="font-semibold text-slate-900">{gamp.cat}</div>
+        </div>
+        <div className="p-3 bg-slate-50 rounded border border-slate-200">
+          <div className="text-slate-500 uppercase tracking-wide mb-1">NIST AI RMF</div>
+          <div className="font-semibold text-slate-900">{mapNIST}</div>
+        </div>
+      </div>
+      {localTier.reasons && (
+        <ul className="mt-3 text-xs text-slate-600 list-disc list-inside">
+          {localTier.reasons.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Module Screen ---------- */
+function ModuleScreen({ state, dispatch, savedFlash }) {
+  const mod = MODULES.find((m) => m.id === state.activeModule);
+  const modState = state.modules[mod.id] || { answers: {}, result: null, status: "idle" };
+  const intake = state.intake;
+
+  const allVisibleQuestions = mod.groups.flatMap((g) => visibleQuestions(g, intake));
+  const answeredQ = allVisibleQuestions.filter((q) => {
+    const v = modState.answers[q.id];
+    return Array.isArray(v) ? v.length > 0 : v != null && v !== "";
+  }).length;
+  const complete = answeredQ === allVisibleQuestions.length && allVisibleQuestions.length > 0;
+
+  const localTier = state.modules[1] && state.modules[1].answers
+    ? classifyRiskTier(intake, state.modules[1].answers)
+    : null;
+
+  async function submitModule() {
+    dispatch({ type: "SET_MODULE_RESULT", moduleId: mod.id, result: null, status: "loading" });
+    const payload = {
+      module: mod.id,
+      moduleName: mod.name,
+      intakeAnswers: intake,
+      moduleAnswers: modState.answers,
+      gxpDomains: intake.I1,
+      aiType: intake.I3,
+      deploymentMode: intake.I4,
+      orgType: state.org,
+    };
+    const prompt = `You are a GxP AI governance expert. Given the following AI system characterisation and Module ${mod.id} (${mod.name}) assessment answers, provide: (1) module status [GREEN/AMBER/RED], (2) key finding in 2 sentences, (3) specific regulatory gaps with citations, (4) recommended actions. System and answers: ${JSON.stringify(payload)}. Respond ONLY in JSON matching the per-module schema in PART 4.`;
+    const res = await callClaude(prompt, 2000);
+    if (res.ok) {
+      dispatch({ type: "SET_MODULE_RESULT", moduleId: mod.id, result: res.data });
+    } else {
+      // Fallback local result
+      const fallback = {
+        status: "AMBER",
+        finding:
+          "API call failed — a local heuristic assessment is shown. Review answers carefully and address any gaps your QA/CSV team identifies.",
+        gaps: [],
+        actions: [],
+        _error: res.error,
+      };
+      dispatch({ type: "SET_MODULE_RESULT", moduleId: mod.id, result: fallback });
+    }
+  }
+
+  const nextModuleId = mod.id < 7 ? mod.id + 1 : null;
+
+  return (
+    <div className="max-w-5xl mx-auto p-6 space-y-5">
+      {/* Module tabs */}
+      <div className="flex flex-wrap gap-1 border-b border-slate-200">
+        {MODULES.map((m) => {
+          const active = m.id === mod.id;
+          const ms = state.modules[m.id];
+          const doneBadge = ms && ms.result ? "✓" : "";
+          return (
+            <button
+              key={m.id}
+              onClick={() => dispatch({ type: "SET_ACTIVE_MODULE", moduleId: m.id })}
+              className={`px-3 py-2 text-xs font-medium border-b-2 transition ${
+                active
+                  ? "border-blue-600 text-blue-700"
+                  : "border-transparent text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              M{m.id} {doneBadge}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">
+            Module {mod.id}: {mod.name}
+          </h2>
+          <p className="text-sm text-slate-600 max-w-3xl">{mod.purpose}</p>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {mod.tags.map((t) => (
+              <Badge key={t} color="blue">
+                {t}
+              </Badge>
+            ))}
+          </div>
+        </div>
+        <div className="text-right space-y-1">
+          {localTier && <RiskTierBadge tier={localTier.tier} subtier={localTier.subtier} />}
+          <div className="text-xs text-slate-500">
+            {answeredQ} / {allVisibleQuestions.length} answered
+          </div>
+          {savedFlash && <div className="text-xs text-emerald-600">✓ Assessment saved</div>}
+        </div>
+      </div>
+
+      {mod.id === 1 && localTier && complete && <RiskDashboard localTier={localTier} intake={intake} />}
+
+      {/* OWASP applicability auto-shown on Module 5 */}
+      {mod.id === 5 && (
+        <div className="border border-slate-200 rounded-lg bg-white p-4">
+          <h3 className="font-semibold text-slate-900 text-sm mb-2">OWASP LLM Top 10 Applicability (auto from Intake)</h3>
+          <div className="grid sm:grid-cols-2 gap-2 text-xs">
+            {OWASP_LLM10.map((r) => {
+              const applies = r.applies(intake);
+              return (
+                <div
+                  key={r.id}
+                  className={`p-2 rounded border ${applies ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}
+                >
+                  <div className="font-semibold text-slate-800">
+                    {r.id}: {r.name}
+                  </div>
+                  <div className={`text-xs ${applies ? "text-red-700" : "text-slate-500"}`}>
+                    {applies ? "APPLIES to your system" : "Not applicable"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Module 6 operational mode */}
+      {mod.id === 6 && (
+        <div className="border border-slate-200 rounded-lg bg-white p-4 text-xs text-slate-700">
+          <span className="font-semibold">Operational mode detected: </span>
+          {(intake.I3 || []).includes("Multi-Agent System")
+            ? "AgentOps (multi-agent)"
+            : (intake.I3 || []).includes("RAG Pipeline")
+            ? "LLMOps + Retrieval Monitoring"
+            : (intake.I3 || []).some((v) => /LLM|Generative/i.test(v))
+            ? "LLMOps"
+            : "MLOps"}
+        </div>
+      )}
+
+      {/* Groups */}
+      {mod.groups.map((g) => {
+        const vqs = visibleQuestions(g, intake);
+        if (vqs.length === 0) return null;
+        return (
+          <div key={g.name} className="space-y-3">
+            <h3 className="font-semibold text-slate-900 text-sm uppercase tracking-wide border-b border-slate-200 pb-1">
+              {g.name}
+            </h3>
+            {vqs.map((q) => (
+              <Question
+                key={q.id}
+                q={q}
+                value={modState.answers[q.id]}
+                onChange={(v) => dispatch({ type: "SET_MODULE_ANSWER", moduleId: mod.id, qid: q.id, value: v })}
+              />
+            ))}
+          </div>
+        );
+      })}
+
+      <ModuleResultCard result={modState.result} status={modState.status} localTier={localTier} moduleId={mod.id} />
+
+      <div className="flex justify-between items-center pt-4 flex-wrap gap-2">
+        <button
+          onClick={() => dispatch({ type: "SET_PHASE", phase: "intake" })}
+          className="text-sm text-slate-500 hover:text-slate-700"
+        >
+          ← Intake
+        </button>
+        <div className="flex gap-2 flex-wrap">
+          {(!modState.result || modState.result._error) && (
+            <button
+              disabled={!complete || modState.status === "loading"}
+              onClick={submitModule}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium disabled:bg-slate-300 hover:bg-blue-700"
+            >
+              {modState.status === "loading"
+                ? "Analysing..."
+                : modState.result && modState.result._error
+                ? "Retry Submit"
+                : "Submit Module"}
+            </button>
+          )}
+          {modState.result && nextModuleId && (
+            <button
+              onClick={() => dispatch({ type: "SET_ACTIVE_MODULE", moduleId: nextModuleId })}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+            >
+              Next Module →
+            </button>
+          )}
+          {modState.result && !nextModuleId && (
+            <button
+              onClick={() => dispatch({ type: "SET_PHASE", phase: "report" })}
+              className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700"
+            >
+              Generate Final Report →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Report Screen ---------- */
+function ReportScreen({ state, dispatch }) {
+  const report = state.report;
+  const status = state.reportStatus;
+  const [copied, setCopied] = useState(false);
+
+  // Auto-generate when report is missing and status is idle
+  useEffect(() => {
+    if (!state.report && state.reportStatus === "idle") {
+      generateReport();
+    }
+    // eslint-disable-next-line
+  }, [state.report, state.reportStatus]);
+
+  async function generateReport() {
+    dispatch({ type: "SET_REPORT_STATUS", status: "loading" });
+    const payload = {
+      orgType: state.org,
+      intake: state.intake,
+      modules: Object.fromEntries(
+        Object.entries(state.modules).map(([k, v]) => [k, { answers: v.answers, interim: v.result }])
+      ),
+      gampCategory: gampCategory(state.intake),
+      owaspApplicability: OWASP_LLM10.filter((r) => r.applies(state.intake)).map((r) => `${r.id}: ${r.name}`),
+    };
+    const prompt = `Generate the final consolidated GxP AI Governance Assessment Report using the full report JSON schema from PART 4. Input data: ${JSON.stringify(payload)}. Include all 9 report sections: system profile, go determination, risk tier matrix (current AND achievable), per-module findings, regulatory requirements matrix, risk reduction pathway, prioritised P1/P2/P3 action checklist, validation roadmap, regulatory citation index. Respond ONLY in JSON.`;
+    const res = await callClaude(prompt, 4000);
+    if (res.ok) {
+      dispatch({ type: "SET_REPORT", report: res.data });
+    } else {
+      // Local fallback report
+      const localTier = state.modules[1] && state.modules[1].answers
+        ? classifyRiskTier(state.intake, state.modules[1].answers)
+        : { tier: "MEDIUM", reasons: [] };
+      const gamp = gampCategory(state.intake);
+      const fallback = {
+        _error: res.error,
+        go_determination:
+          localTier.subtier === "UNRESOLVABLE" ? "NO_GO" : localTier.tier === "HIGH" ? "CONDITIONAL_GO" : "GO",
+        rationale:
+          "Local heuristic fallback — API unavailable. Based on Module 1 classification and intake characteristics.",
+        risk_tier: {
+          current: localTier.tier,
+          achievable:
+            localTier.tier === "HIGH" ? "MEDIUM (with mandatory HITL + static model + validation)" : localTier.tier,
+          eu_ai_act: localTier.tier === "HIGH" ? "High-Risk (Annex III)" : "Limited/Minimal Risk",
+          eu_annex_22: localTier.tier === "HIGH" ? "Critical GMP Application" : "Non-Critical GMP",
+          gamp5: gamp.cat,
+          nist_rmf: localTier.tier,
+        },
+        system_profile: `${state.org} · GxP: ${(state.intake.I1 || []).join(", ")} · AI: ${(state.intake.I3 || []).join(", ")} · Deployment: ${state.intake.I4} · Oversight: ${state.intake.I6}`,
+        module_findings: Object.entries(state.modules).map(([k, v]) => ({
+          module: Number(k),
+          status: (v.result && v.result.status) || "AMBER",
+          finding: (v.result && v.result.finding) || "No API result available.",
+          gaps: (v.result && v.result.gaps) || [],
+          citations: [],
+        })),
+        risk_reduction_pathway:
+          localTier.subtier === "UNRESOLVABLE"
+            ? [{ step: 1, action: "Redesign: replace GenAI with deterministic model OR convert to non-critical GMP with full HITL", regulation: "EU GMP Annex 22", effort: "High", type: "prerequisite" }]
+            : [],
+        action_checklist: [],
+        validation_roadmap: { gamp_category: gamp.cat, lifecycle: gamp.depth, documentation: "URS, FS, DS, IQ/OQ/PQ or CSA evidence package, VSR", testing_approach: "Risk-based per GAMP 5 §9" },
+        regulatory_citations: [],
+      };
+      dispatch({ type: "SET_REPORT", report: fallback });
+    }
+  }
+
+  if (status === "loading" || !report) {
+    return (
+      <div className="max-w-4xl mx-auto p-6 text-center">
+        <div className="animate-pulse text-slate-600 text-sm">
+          Generating consolidated Go / No-Go report with Claude API...
+        </div>
+      </div>
+    );
+  }
+
+  const goColor =
+    report.go_determination === "GO"
+      ? "green"
+      : report.go_determination === "NO_GO"
+      ? "red"
+      : "amber";
+
+  function toMarkdown() {
+    const lines = [];
+    lines.push(`# GxP AI Governance Assessment Report`);
+    lines.push(`**Determination:** ${report.go_determination}`);
+    lines.push(`**Risk Tier:** ${report.risk_tier?.current} → Achievable: ${report.risk_tier?.achievable}`);
+    lines.push(`\n## System Profile\n${report.system_profile || ""}`);
+    lines.push(`\n## Rationale\n${report.rationale || ""}`);
+    lines.push(`\n## Risk Tier Matrix`);
+    if (report.risk_tier) {
+      lines.push(`- EU AI Act: ${report.risk_tier.eu_ai_act}`);
+      lines.push(`- EU Annex 22: ${report.risk_tier.eu_annex_22}`);
+      lines.push(`- GAMP 5: ${report.risk_tier.gamp5}`);
+      lines.push(`- NIST AI RMF: ${report.risk_tier.nist_rmf}`);
+    }
+    if (report.module_findings) {
+      lines.push(`\n## Per-Module Findings`);
+      report.module_findings.forEach((m) => {
+        lines.push(`\n### Module ${m.module} — ${m.status}`);
+        lines.push(m.finding);
+        (m.gaps || []).forEach((g) => lines.push(`- [${g.priority || ""}] ${g.description} (${g.regulation || ""} ${g.section || ""})`));
+      });
+    }
+    if (report.risk_reduction_pathway) {
+      lines.push(`\n## Risk Reduction Pathway`);
+      report.risk_reduction_pathway.forEach((p) => lines.push(`${p.step}. ${p.action} — ${p.regulation} [${p.effort}, ${p.type}]`));
+    }
+    if (report.action_checklist) {
+      lines.push(`\n## Prioritised Action Checklist`);
+      report.action_checklist.forEach((a) => lines.push(`- [${a.priority}] ${a.action} (${a.role}) — ${a.basis}`));
+    }
+    if (report.validation_roadmap) {
+      lines.push(`\n## Validation Roadmap`);
+      lines.push(`- Category: ${report.validation_roadmap.gamp_category}`);
+      lines.push(`- Lifecycle: ${report.validation_roadmap.lifecycle}`);
+      lines.push(`- Documentation: ${report.validation_roadmap.documentation}`);
+      lines.push(`- Testing: ${report.validation_roadmap.testing_approach}`);
+    }
+    if (report.regulatory_citations) {
+      lines.push(`\n## Regulatory Citation Index`);
+      report.regulatory_citations.forEach((c) => lines.push(`- ${c.instrument}: ${c.citation} (${c.type}) ${c.url || ""}`));
+    }
+    return lines.join("\n");
+  }
+
+  function copyMd() {
+    const md = toMarkdown();
+    try {
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(
+          () => setCopied(true),
+          () => fallbackCopy(md)
+        );
+      } else {
+        fallbackCopy(md);
+      }
+    } catch (e) {
+      fallbackCopy(md);
+    }
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+    } catch (e) {
+      // last resort: open in new window
+      try {
+        const w = window.open("", "_blank");
+        if (w) {
+          w.document.write("<pre>" + text.replace(/[&<>]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + "</pre>");
+        }
+      } catch (e2) {}
+    }
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto p-6 space-y-5 print:p-0">
+      <div className="flex justify-between items-center print:hidden">
+        <button
+          onClick={() => dispatch({ type: "SET_PHASE", phase: "module" })}
+          className="text-sm text-slate-500 hover:text-slate-700"
+        >
+          ← Back to Modules
+        </button>
+        <div className="flex gap-2">
+          <button onClick={copyMd} className="px-3 py-1.5 border border-slate-300 rounded text-sm hover:bg-slate-50">
+            {copied ? "✓ Copied" : "Copy as Markdown"}
+          </button>
+          <button onClick={() => window.print()} className="px-3 py-1.5 border border-slate-300 rounded text-sm hover:bg-slate-50">
+            Print
+          </button>
+          <button
+            onClick={() => {
+              dispatch({ type: "SET_REPORT", report: null, status: "idle" });
+            }}
+            className="px-3 py-1.5 border border-slate-300 rounded text-sm hover:bg-slate-50"
+          >
+            Regenerate
+          </button>
+        </div>
+      </div>
+
+      <div className="border-2 border-slate-900 rounded-lg p-6 bg-white">
+        <div className="text-xs text-slate-500 uppercase tracking-wide">GxP AI Governance Assessment Report</div>
+        <div className="flex flex-wrap gap-2 items-center mt-2">
+          <h1 className="text-3xl font-bold text-slate-900">
+            Determination:{" "}
+            <span className={goColor === "green" ? "text-emerald-700" : goColor === "red" ? "text-red-700" : "text-amber-700"}>
+              {report.go_determination}
+            </span>
+          </h1>
+          <RiskTierBadge tier={report.risk_tier?.current} />
+        </div>
+        {report.rationale && <p className="text-sm text-slate-700 mt-3">{report.rationale}</p>}
+        {report._error && (
+          <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+            API unavailable — local heuristic fallback used. Error: {report._error}
+          </div>
+        )}
+      </div>
+
+      {/* System Profile */}
+      {report.system_profile && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-2">1. System Profile</h2>
+          <p className="text-sm text-slate-700">{report.system_profile}</p>
+        </section>
+      )}
+
+      {/* Risk Tier */}
+      {report.risk_tier && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">2. Risk Tier Dashboard</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="p-3 bg-slate-50 rounded border border-slate-200">
+              <div className="text-slate-500 uppercase tracking-wide mb-1">EU AI Act</div>
+              <div className="font-semibold">{report.risk_tier.eu_ai_act}</div>
+            </div>
+            <div className="p-3 bg-slate-50 rounded border border-slate-200">
+              <div className="text-slate-500 uppercase tracking-wide mb-1">EU Annex 22</div>
+              <div className="font-semibold">{report.risk_tier.eu_annex_22}</div>
+            </div>
+            <div className="p-3 bg-slate-50 rounded border border-slate-200">
+              <div className="text-slate-500 uppercase tracking-wide mb-1">GAMP 5</div>
+              <div className="font-semibold">{report.risk_tier.gamp5}</div>
+            </div>
+            <div className="p-3 bg-slate-50 rounded border border-slate-200">
+              <div className="text-slate-500 uppercase tracking-wide mb-1">NIST AI RMF</div>
+              <div className="font-semibold">{report.risk_tier.nist_rmf}</div>
+            </div>
+          </div>
+          {report.risk_tier.achievable && (
+            <p className="text-sm text-slate-700 mt-3">
+              <strong>Achievable tier:</strong> {report.risk_tier.achievable}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* Per-Module Findings */}
+      {report.module_findings && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">3. Per-Module Findings</h2>
+          <div className="space-y-3">
+            {report.module_findings.map((m, idx) => {
+              const color = m.status === "GREEN" ? "green" : m.status === "RED" ? "red" : "amber";
+              const modDef = MODULES.find((x) => x.id === Number(m.module));
+              return (
+                <div key={idx} className="border border-slate-200 rounded p-3 bg-slate-50">
+                  <div className="flex gap-2 flex-wrap items-center mb-1">
+                    <Badge color={color}>{m.status}</Badge>
+                    <span className="text-sm font-semibold">
+                      Module {m.module}: {modDef?.name}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700">{m.finding}</p>
+                  {m.gaps && m.gaps.length > 0 && (
+                    <ul className="list-disc list-inside text-xs text-slate-700 mt-2 space-y-1">
+                      {m.gaps.map((g, j) => (
+                        <li key={j}>
+                          <strong>{g.description}</strong> — {g.regulation} {g.section ? `(${g.section})` : ""}{" "}
+                          {g.priority && <Badge color={g.priority === "P1" ? "red" : g.priority === "P2" ? "amber" : "slate"}>{g.priority}</Badge>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Risk Reduction Pathway */}
+      {report.risk_reduction_pathway && report.risk_reduction_pathway.length > 0 && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">4. Risk Reduction Pathway</h2>
+          <ol className="list-decimal list-inside space-y-2 text-sm text-slate-700">
+            {report.risk_reduction_pathway.map((p, i) => (
+              <li key={i}>
+                <strong>{p.action}</strong> — {p.regulation}{" "}
+                <Badge color="blue">{p.effort}</Badge>{" "}
+                <Badge color={p.type === "prerequisite" ? "red" : "slate"}>{p.type}</Badge>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {/* Action Checklist */}
+      {report.action_checklist && report.action_checklist.length > 0 && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">5. Prioritised Action Checklist</h2>
+          <ActionChecklist items={report.action_checklist} />
+        </section>
+      )}
+
+      {/* Validation Roadmap */}
+      {report.validation_roadmap && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">6. Validation Roadmap</h2>
+          <dl className="text-sm text-slate-700 space-y-1">
+            <div><dt className="inline font-semibold">GAMP Category: </dt><dd className="inline">{report.validation_roadmap.gamp_category}</dd></div>
+            <div><dt className="inline font-semibold">Lifecycle: </dt><dd className="inline">{report.validation_roadmap.lifecycle}</dd></div>
+            <div><dt className="inline font-semibold">Documentation: </dt><dd className="inline">{report.validation_roadmap.documentation}</dd></div>
+            <div><dt className="inline font-semibold">Testing Approach: </dt><dd className="inline">{report.validation_roadmap.testing_approach}</dd></div>
+          </dl>
+        </section>
+      )}
+
+      {/* Regulatory Citations */}
+      {report.regulatory_citations && report.regulatory_citations.length > 0 && (
+        <section className="border border-slate-200 rounded-lg p-5 bg-white">
+          <h2 className="font-semibold text-slate-900 mb-3">7. Regulatory Citation Index</h2>
+          <ul className="text-xs text-slate-700 space-y-1 list-disc list-inside">
+            {report.regulatory_citations.map((c, i) => (
+              <li key={i}>
+                <strong>{c.instrument}</strong>: {c.citation}{" "}
+                <Badge color={c.type === "binding" ? "red" : "slate"}>{c.type || ""}</Badge>
+                {c.url && <> — <a className="text-blue-600 underline" href={c.url} target="_blank" rel="noreferrer">link</a></>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Action Checklist ---------- */
+function ActionChecklist({ items }) {
+  const [checked, setChecked] = useState({});
+  return (
+    <ul className="space-y-2">
+      {items.map((a, i) => (
+        <li key={i} className={`flex items-start gap-2 p-2 rounded ${checked[i] ? "bg-emerald-50" : ""}`}>
+          <input
+            type="checkbox"
+            checked={!!checked[i]}
+            onChange={() => setChecked({ ...checked, [i]: !checked[i] })}
+            className="mt-0.5"
+          />
+          <div className="flex-1 text-sm">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge color={a.priority === "P1" ? "red" : a.priority === "P2" ? "amber" : "blue"}>{a.priority}</Badge>
+              <span className={`font-medium ${checked[i] ? "line-through text-slate-400" : "text-slate-800"}`}>
+                {a.action}
+              </span>
+            </div>
+            <div className="text-xs text-slate-600 mt-0.5">
+              Role: {a.role} · Basis: {a.basis} · Criteria: {a.criteria}
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ==================== ERROR BOUNDARY ==================== */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    if (typeof console !== "undefined") console.error("App error:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="max-w-2xl mx-auto p-6">
+          <div className="border-2 border-red-300 bg-red-50 rounded-lg p-5">
+            <h2 className="font-bold text-red-900 mb-2">Something went wrong</h2>
+            <p className="text-sm text-red-800 mb-3">
+              The assessment hit an unexpected error. Your saved answers are still in storage and will be loaded next time.
+            </p>
+            <pre className="text-xs bg-white border border-red-200 rounded p-2 overflow-auto max-h-40">
+              {String(this.state.error && this.state.error.message)}
+            </pre>
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => this.setState({ error: null })}
+                className="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+              >
+                Try again
+              </button>
+              <button
+                onClick={() => {
+                  try {
+                    if (typeof window !== "undefined" && window.localStorage) {
+                      const toRemove = [];
+                      for (let i = 0; i < window.localStorage.length; i++) {
+                        const k = window.localStorage.key(i);
+                        if (k && k.startsWith("gxp_assessment:")) toRemove.push(k);
+                      }
+                      toRemove.forEach((k) => window.localStorage.removeItem(k));
+                    }
+                  } catch (e) {}
+                  if (typeof window !== "undefined" && window.location) window.location.reload();
+                }}
+                className="px-3 py-1.5 border border-red-300 rounded text-sm"
+              >
+                Reset & reload
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ==================== ROOT APP ==================== */
+function AppInner() {
+  const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, sessionId: genId() }));
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  // Load from storage once
+  useEffect(() => {
+    const keys = [];
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k && k.startsWith("gxp_assessment:")) keys.push(k);
+        }
+      }
+    } catch (e) {}
+    if (keys.length > 0) {
+      try {
+        const raw = storage.get(keys[0]);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.sessionId) dispatch({ type: "LOAD", payload: parsed });
+        }
+      } catch (e) {}
+    }
+  // eslint-disable-next-line
+  }, []);
+
+  // Autosave
+  useEffect(() => {
+    if (!state.sessionId) return;
+    try {
+      storage.set(`gxp_assessment:${state.sessionId}`, JSON.stringify(state));
+      setSavedFlash(true);
+      const t = setTimeout(() => setSavedFlash(false), 1200);
+      return () => clearTimeout(t);
+    } catch (e) {}
+  }, [state]);
+
+  const { answered, total } = countTotalQuestions(state);
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <style>{`
+        @media print {
+          .print\\:hidden { display: none !important; }
+          body { background: white; }
+        }
+      `}</style>
+
+      {/* Top bar */}
+      <header className="sticky top-0 z-10 bg-white border-b border-slate-200 print:hidden">
+        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center text-white font-bold text-sm">
+              Gx
+            </div>
+            <div>
+              <div className="font-semibold text-sm">GxP AI Governance Assessment</div>
+              <div className="text-xs text-slate-500">
+                {state.org ? `${state.org} · ` : ""}Session {state.sessionId?.slice(0, 8)}
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 max-w-md">
+            <ProgressBar answered={answered} total={total} />
+          </div>
+          <div className="text-xs">
+            {savedFlash && <span className="text-emerald-600">✓ Saved</span>}
+          </div>
+        </div>
+      </header>
+
+      <main>
+        {state.phase === "welcome" && <WelcomeScreen state={state} dispatch={dispatch} />}
+        {state.phase === "intake" && <IntakeScreen state={state} dispatch={dispatch} />}
+        {state.phase === "module" && <ModuleScreen state={state} dispatch={dispatch} savedFlash={savedFlash} />}
+        {state.phase === "report" && <ReportScreen state={state} dispatch={dispatch} />}
+      </main>
+
+      <footer className="py-6 text-center text-xs text-slate-400 print:hidden">
+        GxP AI Adoption & Governance Assessment Tool · Build Brief v1.0 · April 2026
+      </footer>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
+}    // Mount the React application into the root div
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
